@@ -1,64 +1,73 @@
-// create web server
-var http = require('http');
+// create web servervar express = require('express');
+var app = express();
+var bodyParser = require('body-parser');
 var fs = require('fs');
-var path = require('path');
-var mime = require('mime');
-var cache = {};
 
-// send 404 error
-function send404(response) {
-  response.writeHead(404, {'Content-Type': 'text/plain'});
-  response.write('Error 404: resource not found.');
-  response.end();
-}
+// create web server
+var server = require('http').createServer(app);
 
-// send file data
-function sendFile(response, filePath, fileContents) {
-  response.writeHead(200, {'Content-Type': mime.lookup(path.basename(filePath))});
-  response.end(fileContents);
-}
+// create socket server
+var io = require('socket.io')(server);
 
-// check cache
-function serveStatic(response, cache, absPath) {
-  if (cache[absPath]) {
-    sendFile(response, absPath, cache[absPath]);
-  } else {
-    fs.exists(absPath, function(exists) {
-      if (exists) {
-        fs.readFile(absPath, function(err, data) {
-          if (err) {
-            send404(response);
-          } else {
-            cache[absPath] = data;
-            sendFile(response, absPath, data);
-          }
-        });
+// create comments array
+var comments = [];
+
+// load comments from file
+fs.exists('comments.txt', function(exists) {
+  if (exists) {
+    fs.readFile('comments.txt', 'utf8', function(err, data) {
+      if (err) {
+        console.log(err);
       } else {
-        send404(response);
+        comments = JSON.parse(data);
       }
     });
   }
+});
+
+// set up body parser
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// serve static files
+app.use(express.static('public'));
+
+// serve comments
+app.get('/comments', function(req, res) {
+  res.json(comments);
+});
+
+// add comment
+app.post('/comments', function(req, res) {
+  var comment = req.body;
+  comments.push(comment);
+  res.json(comment);
+  io.emit('comment', comment);
+});
+
+// save comments to file
+function saveComments() {
+  fs.writeFile('comments.txt', JSON.stringify(comments), function(err) {
+    if (err) {
+      console.log(err);
+    }
+  });
 }
 
-// create http server
-var server = http.createServer(function(request, response) {
-  var filePath = false;
+// save comments every 5 seconds
+setInterval(function() {
+  saveComments();
+}, 5000);
 
-  if (request.url == '/') {
-    filePath = 'public/index.html';
-  } else {
-    filePath = 'public' + request.url;
-  }
-
-  var absPath = './' + filePath;
-  serveStatic(response, cache, absPath);
-});
-
-// start web server
+// listen on port 3000
 server.listen(3000, function() {
-  console.log("Server listening on port 3000.");
+  console.log('listening on *:3000');
 });
 
-// load chat server
-var chatServer = require('./lib/chat_server');
-chatServer.listen(server);
+// listen for socket connections
+io.on('connection', function(socket) {
+  console.log('a user connected');
+  socket.on('disconnect', function() {
+    console.log('user disconnected');
+  });
+});
